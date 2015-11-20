@@ -87,6 +87,7 @@ public:
     void setBytesTotal(qint64 bytes);
 
     bool hasError() const;
+    bool isNoSuchFileError() const;
     QString errorMessage() const;
     void clearError();
 
@@ -128,6 +129,7 @@ private:
 
     QFtpPI *pi;
     QString err;
+    bool errNoSuchFile;
     qint64 bytesDone;
     qint64 bytesTotal;
     bool callWriteData;
@@ -443,6 +445,11 @@ inline bool QFtpDTP::hasError() const
     return !err.isNull();
 }
 
+inline bool QFtpDTP::isNoSuchFileError() const
+{
+    return errNoSuchFile;
+}
+
 inline QString QFtpDTP::errorMessage() const
 {
     return err;
@@ -451,6 +458,7 @@ inline QString QFtpDTP::errorMessage() const
 inline void QFtpDTP::clearError()
 {
     err.clear();
+    errNoSuchFile = false;
 }
 
 void QFtpDTP::abortConnection()
@@ -685,7 +693,10 @@ void QFtpDTP::socketReadyRead()
                 // does not exist, but rather write a text to the data socket
                 // -- try to catch these cases
                 if (line.endsWith("No such file or directory\r\n"))
+                {
                     err = QString::fromLatin1(line);
+                    errNoSuchFile = true;
+                }
             }
         }
     } else {
@@ -858,6 +869,16 @@ void QFtpPI::clearPendingCommands()
 void QFtpPI::abort()
 {
     pendingCommands.clear();
+
+    if (commandSocket.state() != QAbstractSocket::ConnectedState)
+    {
+        commandSocket.abort();
+        dtp.abortConnection();
+        currentCmd.clear();
+        state = Begin;
+        emit connectState(QFtp::Unconnected);
+        return;
+    }
 
     if (abortState != None)
         // ABOR already sent
@@ -1116,8 +1137,12 @@ bool QFtpPI::processReply()
             state = Idle;
             // no break!
         case Idle:
-            if (dtp.hasError()) {
-                emit error(QFtp::UnknownError, dtp.errorMessage());
+            if (dtp.hasError())
+            {
+                if (dtp.isNoSuchFileError())
+                    emit error(QFtp::NoSuchFile, dtp.errorMessage());
+                else
+                    emit error(QFtp::UnknownError, dtp.errorMessage());
                 dtp.clearError();
             }
             startNextCmd();
@@ -1135,7 +1160,10 @@ bool QFtpPI::processReply()
                 transferConnectionExtended = false;
                 pendingCommands.prepend(QLatin1String("PORT\r\n"));
             } else {
-                emit error(QFtp::UnknownError, replyText);
+                if (replyCodeInt == 550)
+                    emit error(QFtp::NoSuchFile, replyText);
+                else
+                    emit error(QFtp::UnknownError, replyText);
             }
             if (state != Waiting) {
                 state = Idle;
@@ -2067,8 +2095,57 @@ void QFtp::abort()
     if (d->pending.isEmpty())
         return;
 
+    if (d->state != Connected && d->state != LoggedIn)
+    {
+        reset();
+        return;
+    }
+
     clearPendingCommands();
     d->pi.abort();
+}
+
+void QFtp::reset()
+{
+    d->pi.disconnect(this);
+    d->pi.dtp.disconnect(this);
+
+    QScopedPointer<QFtpPrivate> old;
+    old.reset(d.take());
+
+    d.reset(new QFtpPrivate(this));
+
+    d->errorString = tr("Unknown error");
+
+    connect(&d->pi, SIGNAL(connectState(int)),
+            SLOT(_q_piConnectState(int)));
+    connect(&d->pi, SIGNAL(finished(QString)),
+            SLOT(_q_piFinished(QString)));
+    connect(&d->pi, SIGNAL(error(int,QString)),
+            SLOT(_q_piError(int,QString)));
+    connect(&d->pi, SIGNAL(rawFtpReply(int,QString)),
+            SLOT(_q_piFtpReply(int,QString)));
+
+    connect(&d->pi.dtp, SIGNAL(readyRead()),
+            SIGNAL(readyRead()));
+    connect(&d->pi.dtp, SIGNAL(dataTransferProgress(qint64,qint64)),
+            SIGNAL(dataTransferProgress(qint64,qint64)));
+    connect(&d->pi.dtp, SIGNAL(listInfo(QUrlInfo)),
+            SIGNAL(listInfo(QUrlInfo)));
+
+    old->pi.abort();
+    old->pi.dtp.abortConnection();
+
+    foreach (QFtpCommand *cmd, old->pending)
+    {
+        emit commandFinished(cmd->id, true);
+        delete cmd;
+    }
+    if (!old->pending.isEmpty())
+        emit done(true);
+    old->pending.clear();
+    if (old->state != d->state)
+        emit stateChanged(d->state);
 }
 
 /*!
@@ -2391,7 +2468,8 @@ void QFtpPrivate::_q_piFtpReply(int code, const QString &text)
 QFtp::~QFtp()
 {
     abort();
-    close();
+    if (!d->pending.isEmpty())
+        close();
 }
 
 QT_END_NAMESPACE

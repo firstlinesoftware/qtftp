@@ -71,7 +71,8 @@ public:
         UnknownError,
         HostNotFound,
         ConnectionRefused,
-        NotConnected
+        NotConnected,
+        NoSuchFile
     };
     enum Command {
         None,
@@ -133,6 +134,7 @@ public:
 
 public Q_SLOTS:
     void abort();
+    void reset();
 
 Q_SIGNALS:
     void stateChanged(int);
