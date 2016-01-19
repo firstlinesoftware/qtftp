@@ -57,6 +57,7 @@
 #include "qhash.h"
 #include "qtcpserver.h"
 #include "qlocale.h"
+#include "qtextcodec.h"
 
 QT_BEGIN_NAMESPACE
 
@@ -102,7 +103,12 @@ public:
 
     void abortConnection();
 
-    static bool parseDir(const QByteArray &buffer, const QString &userName, QUrlInfo *info);
+    bool parseDir(const QByteArray &buffer, const QString &userName, QUrlInfo *info);
+    
+    QString dataToUnicode(const QByteArray &data) const;
+    
+    bool isTextCodecInstalled() const;
+    void installTextCodec(QTextCodec *codec);
 
 signals:
     void listInfo(const QUrlInfo&);
@@ -143,6 +149,8 @@ private:
     bool is_ba;
 
     QByteArray bytesFromSocket;
+    
+    QTextCodec *textCodec;
 };
 
 /**********************************************************************
@@ -235,8 +243,15 @@ private:
 class QFtpCommand
 {
 public:
+  struct InnerCommand
+  {
+  };
+
+public:
     QFtpCommand(QFtp::Command cmd, QStringList raw, const QByteArray &ba);
     QFtpCommand(QFtp::Command cmd, QStringList raw, QIODevice *dev = 0);
+    QFtpCommand(QFtp::Command cmd, QStringList raw, InnerCommand, const QByteArray &ba);
+    QFtpCommand(QFtp::Command cmd, QStringList raw, InnerCommand, QIODevice *dev = 0);
     ~QFtpCommand();
 
     int id;
@@ -250,6 +265,8 @@ public:
         QIODevice *dev;
     } data;
     bool is_ba;
+    
+    bool emitDone;
 
     static QBasicAtomicInt idCounter;
 };
@@ -257,16 +274,30 @@ public:
 QBasicAtomicInt QFtpCommand::idCounter = Q_BASIC_ATOMIC_INITIALIZER(1);
 
 QFtpCommand::QFtpCommand(QFtp::Command cmd, QStringList raw, const QByteArray &ba)
-    : command(cmd), rawCmds(raw), is_ba(true)
+    : command(cmd), rawCmds(raw), is_ba(true), emitDone(true)
 {
     id = idCounter.fetchAndAddRelaxed(1);
     data.ba = new QByteArray(ba);
 }
 
 QFtpCommand::QFtpCommand(QFtp::Command cmd, QStringList raw, QIODevice *dev)
-    : command(cmd), rawCmds(raw), is_ba(false)
+    : command(cmd), rawCmds(raw), is_ba(false), emitDone(true)
 {
     id = idCounter.fetchAndAddRelaxed(1);
+    data.dev = dev;
+}
+
+QFtpCommand::QFtpCommand(QFtp::Command cmd, QStringList raw, InnerCommand, const QByteArray &ba)
+    : command(cmd), rawCmds(raw), is_ba(true), emitDone(false)
+{
+    id = -1;
+    data.ba = new QByteArray(ba);
+}
+
+QFtpCommand::QFtpCommand(QFtp::Command cmd, QStringList raw, InnerCommand, QIODevice *dev)
+    : command(cmd), rawCmds(raw), is_ba(false), emitDone(false)
+{
+    id = -1;
     data.dev = dev;
 }
 
@@ -286,7 +317,8 @@ QFtpDTP::QFtpDTP(QFtpPI *p, QObject *parent) :
     socket(0),
     listener(this),
     pi(p),
-    callWriteData(false)
+    callWriteData(false),
+    textCodec(0)
 {
     clearData();
     listener.setObjectName(QLatin1String("QFtpDTP active state server"));
@@ -628,7 +660,7 @@ bool QFtpDTP::parseDir(const QByteArray &buffer, const QString &userName, QUrlIn
     if (buffer.isEmpty())
         return false;
 
-    QString bufferStr = QString::fromLatin1(buffer).trimmed();
+    QString bufferStr = dataToUnicode(buffer).trimmed();
 
     // Unix style FTP servers
     QRegExp unixPattern(QLatin1String("^([\\-dl])([a-zA-Z\\-]{9,9})\\s+\\d+\\s+(\\S*)\\s+"
@@ -648,6 +680,24 @@ bool QFtpDTP::parseDir(const QByteArray &buffer, const QString &userName, QUrlIn
 
     // Unsupported
     return false;
+}
+
+QString QFtpDTP::dataToUnicode(const QByteArray &data) const
+{
+    if (textCodec)
+        return textCodec->toUnicode(data);
+    else
+        return QString::fromLatin1(data);
+}
+
+bool QFtpDTP::isTextCodecInstalled() const
+{
+    return textCodec;
+}
+
+void QFtpDTP::installTextCodec(QTextCodec *codec)
+{
+    textCodec = codec;
 }
 
 void QFtpDTP::socketConnected()
@@ -694,7 +744,7 @@ void QFtpDTP::socketReadyRead()
                 // -- try to catch these cases
                 if (line.endsWith("No such file or directory\r\n"))
                 {
-                    err = QString::fromLatin1(line);
+                    err = dataToUnicode(line);
                     errNoSuchFile = true;
                 }
             }
@@ -978,7 +1028,7 @@ void QFtpPI::readyRead()
                 replyText += line;
             if (!commandSocket.canReadLine())
                 return;
-            line = QString::fromLatin1(commandSocket.readLine());
+            line = dtp.dataToUnicode(commandSocket.readLine());
             lineLeft4 = line.left(4);
         }
         replyText += line.mid(4); // strip reply code 'xyz '
@@ -1017,6 +1067,25 @@ bool QFtpPI::processReply()
         }
     }
 
+    if (currentCmd.startsWith(QLatin1String("FEAT")) && replyCodeInt == 211 && !dtp.isTextCodecInstalled()) {
+        QStringList features = replyText.split('\n', QString::SkipEmptyParts);
+        if (!features.isEmpty() && features[0].startsWith(QLatin1String("Features:"))) {
+            for (int i = 1; i < features.size(); ++i) {
+                if (features[i].trimmed() == QLatin1String("UTF8")) {
+                    dtp.installTextCodec(QTextCodec::codecForName("UTF-8"));
+                    break;
+                }
+            }
+        }
+    }
+    
+    if (currentCmd.startsWith(QLatin1String("OPTS UTF-8 ON")) && !dtp.isTextCodecInstalled()) {
+        if (replyCodeInt == 211)
+            dtp.installTextCodec(QTextCodec::codecForName("UTF-8"));
+        else
+            dtp.installTextCodec(QTextCodec::codecForName("ISO-8859-1"));
+    }
+    
     switch (abortState) {
         case AbortStarted:
             abortState = WaitForAbortToFinish;
@@ -1298,6 +1367,8 @@ public:
     void _q_piFtpReply(int, const QString&);
 
     int addCommand(QFtpCommand *cmd);
+    void rawInnerCommand(const QString &command);
+    void innerCommandFinished(QFtpCommand *c, bool error);
 
     QFtpPI pi;
     QList<QFtpCommand *> pending;
@@ -1314,8 +1385,42 @@ public:
     QFtp *q_ptr;
 };
 
+void QFtpPrivate::rawInnerCommand(const QString &command)
+{
+    QString cmd = command.trimmed() + QLatin1String("\r\n");
+    addCommand(new QFtpCommand(QFtp::RawCommand, QStringList(cmd), QFtpCommand::InnerCommand()));
+}
+
+void QFtpPrivate::innerCommandFinished(QFtpCommand *c, bool error)
+{
+    QString cmd = c->rawCmds.isEmpty() ? QString() : c->rawCmds[0];
+    bool emitDone = c->emitDone;
+    pending.removeFirst();
+    delete c;
+    if (cmd.startsWith(QLatin1String("FEAT")) && !pi.dtp.isTextCodecInstalled()) {
+        // if feature command failed, try expired command from "IETF draft"
+        rawInnerCommand(QLatin1String("OPTS UTF-8 ON"));
+    }
+    if (pending.isEmpty()) {
+        if (emitDone)
+            emit q_func()->done(false);
+    } else {
+        _q_startNextCommand();
+    }
+    Q_UNUSED(error);
+}
+
 int QFtpPrivate::addCommand(QFtpCommand *cmd)
 {
+    if (cmd->id == -1) {
+        foreach (QFtpCommand *c, pending) {
+            if (c->id > 0) {
+                cmd->emitDone = true;
+                break;
+            }
+        }
+    }
+
     pending.append(cmd);
 
     if (pending.count() == 1) {
@@ -2275,7 +2380,8 @@ void QFtpPrivate::_q_startNextCommand()
 
     if (q->bytesAvailable())
         q->readAll(); // clear the data
-    emit q->commandStarted(c->id);
+    if (c->id != -1)
+        emit q->commandStarted(c->id);
 
     // Proxy support, replace the Login argument in place, then fall
     // through.
@@ -2342,6 +2448,11 @@ void QFtpPrivate::_q_piFinished(const QString&)
         return;
     QFtpCommand *c = pending.first();
 
+    if (c->id == -1) {
+        innerCommandFinished(c, false);
+        return;
+    }
+    
     if (c->command == QFtp::Close) {
         // The order of in which the slots are called is arbitrary, so
         // disconnect the SIGNAL-SIGNAL temporary to make sure that we
@@ -2376,6 +2487,11 @@ void QFtpPrivate::_q_piError(int errorCode, const QString &text)
     }
 
     QFtpCommand *c = pending.first();
+    
+    if (c->id == -1) {
+        innerCommandFinished(c, false);
+        return;
+    }
 
     // non-fatal errors
     if (c->command == QFtp::Get && pi.currentCommand().startsWith(QLatin1String("SIZE "))) {
@@ -2445,6 +2561,12 @@ void QFtpPrivate::_q_piError(int errorCode, const QString &text)
 void QFtpPrivate::_q_piConnectState(int connectState)
 {
     state = QFtp::State(connectState);
+    
+    if (state == QFtp::Connected && !pi.dtp.isTextCodecInstalled()) {
+        // request server features available (we expect UTF8 to be included according to RFC-2640)
+        rawInnerCommand(QLatin1String("FEAT"));
+    }
+    
     emit q_func()->stateChanged(state);
     if (close_waitForStateChange) {
         close_waitForStateChange = false;
@@ -2456,7 +2578,7 @@ void QFtpPrivate::_q_piConnectState(int connectState)
 */
 void QFtpPrivate::_q_piFtpReply(int code, const QString &text)
 {
-    if (q_func()->currentCommand() == QFtp::RawCommand) {
+    if (q_func()->currentCommand() == QFtp::RawCommand && !pending.isEmpty() && pending.first()->id != -1) {
         pi.rawCommand = true;
         emit q_func()->rawCommandReply(code, text);
     }
