@@ -106,6 +106,7 @@ public:
     bool parseDir(const QByteArray &buffer, const QString &userName, QUrlInfo *info);
     
     QString dataToUnicode(const QByteArray &data) const;
+    QByteArray unicodeToData(const QString &str) const;
     
     bool isTextCodecInstalled() const;
     void installTextCodec(QTextCodec *codec);
@@ -688,6 +689,14 @@ QString QFtpDTP::dataToUnicode(const QByteArray &data) const
         return textCodec->toUnicode(data);
     else
         return QString::fromLatin1(data);
+}
+
+QByteArray QFtpDTP::unicodeToData(const QString &str) const
+{
+    if (textCodec)
+        return textCodec->fromUnicode(str);
+    else
+        return str.toLatin1();
 }
 
 bool QFtpDTP::isTextCodecInstalled() const
@@ -1309,7 +1318,7 @@ bool QFtpPI::startNextCmd()
     qDebug("QFtpPI send: %s", currentCmd.left(currentCmd.length()-2).toLatin1().constData());
 #endif
     state = Waiting;
-    commandSocket.write(currentCmd.toLatin1());
+    commandSocket.write(dtp.unicodeToData(currentCmd));
     return true;
 }
 
@@ -2261,7 +2270,7 @@ void QFtp::reset()
 */
 int QFtp::currentId() const
 {
-    if (d->pending.isEmpty())
+    if (d->pending.isEmpty() || d->pending.first()->id == -1)
         return 0;
     return d->pending.first()->id;
 }
@@ -2274,7 +2283,7 @@ int QFtp::currentId() const
 */
 QFtp::Command QFtp::currentCommand() const
 {
-    if (d->pending.isEmpty())
+    if (d->pending.isEmpty() || d->pending.first()->id == -1)
         return None;
     return d->pending.first()->command;
 }
@@ -2310,7 +2319,12 @@ QIODevice* QFtp::currentDevice() const
 */
 bool QFtp::hasPendingCommands() const
 {
-    return d->pending.count() > 1;
+    int non_inner_cmds = 0;
+    foreach (QFtpCommand *c, d->pending) {
+        if (c->id > 0)
+            ++non_inner_cmds;
+    }
+    return non_inner_cmds > 1;
 }
 
 /*!
@@ -2322,9 +2336,17 @@ bool QFtp::hasPendingCommands() const
 */
 void QFtp::clearPendingCommands()
 {
-    // delete all entires except the first one
-    while (d->pending.count() > 1)
-        delete d->pending.takeLast();
+    if (d->pending.isEmpty())
+        return;
+        
+    // delete all entries except the first one and inner requests
+    QList<QFtpCommand *>::iterator i = d->pending.end();
+    while (--i != d->pending.begin()) {
+        if ((*i)->id > 0)
+            i = d->pending.erase(i);
+        else
+            (*i)->emitDone = false;
+    }
 }
 
 /*!
@@ -2550,10 +2572,11 @@ void QFtpPrivate::_q_piError(int errorCode, const QString &text)
 
     pending.removeFirst();
     delete c;
-    if (pending.isEmpty())
-        emit q->done(true);
-    else
+    
+    if (!pending.isEmpty())
         _q_startNextCommand();
+        
+    emit q->done(true);
 }
 
 /*! \internal
