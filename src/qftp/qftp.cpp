@@ -1078,12 +1078,10 @@ bool QFtpPI::processReply()
 
     if (currentCmd.startsWith(QLatin1String("FEAT")) && replyCodeInt == 211 && !dtp.isTextCodecInstalled()) {
         QStringList features = replyText.split('\n', QString::SkipEmptyParts);
-        if (!features.isEmpty() && features[0].startsWith(QLatin1String("Features:"))) {
-            for (int i = 1; i < features.size(); ++i) {
-                if (features[i].trimmed() == QLatin1String("UTF8")) {
-                    dtp.installTextCodec(QTextCodec::codecForName("UTF-8"));
-                    break;
-                }
+        foreach (QString feature, features) {
+            if (feature.trimmed() == QLatin1String("UTF8")) {
+                dtp.installTextCodec(QTextCodec::codecForName("UTF-8"));
+                break;
             }
         }
     }
@@ -1789,6 +1787,12 @@ int QFtp::connectToHost(const QString &host, quint16 port)
     cmds << QString::number((uint)port);
     int id = d->addCommand(new QFtpCommand(ConnectToHost, cmds));
     d->pi.transferConnectionExtended = true;
+    
+    if (!d->pi.dtp.isTextCodecInstalled()) {
+        // request server features available (we expect UTF8 to be included according to RFC-2640)
+        d->rawInnerCommand(QLatin1String("FEAT"));
+    }
+    
     return id;
 }
 
@@ -2584,12 +2588,6 @@ void QFtpPrivate::_q_piError(int errorCode, const QString &text)
 void QFtpPrivate::_q_piConnectState(int connectState)
 {
     state = QFtp::State(connectState);
-    
-    if (state == QFtp::Connected && !pi.dtp.isTextCodecInstalled()) {
-        // request server features available (we expect UTF8 to be included according to RFC-2640)
-        rawInnerCommand(QLatin1String("FEAT"));
-    }
-    
     emit q_func()->stateChanged(state);
     if (close_waitForStateChange) {
         close_waitForStateChange = false;
