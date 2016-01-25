@@ -89,7 +89,8 @@ public:
         Mkdir,
         Rmdir,
         Rename,
-        RawCommand
+        RawCommand,
+        SetUTF8
     };
     enum TransferMode {
         Active,
@@ -114,6 +115,7 @@ public:
     int mkdir(const QString &dir);
     int rmdir(const QString &dir);
     int rename(const QString &oldname, const QString &newname);
+    int setUTF8();
 
     int rawCommand(const QString &command);
 
