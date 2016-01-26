@@ -150,6 +150,9 @@ Q_SIGNALS:
     void done(bool);
 
 private:
+    void abortImpl();
+    
+private:
     Q_DISABLE_COPY(QFtp)
     QScopedPointer<QFtpPrivate> d;
 

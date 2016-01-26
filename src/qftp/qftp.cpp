@@ -1380,15 +1380,6 @@ public:
 
 int QFtpPrivate::addCommand(QFtpCommand *cmd)
 {
-    if (cmd->id == -1) {
-        foreach (QFtpCommand *c, pending) {
-            if (c->id > 0) {
-                cmd->emitDone = true;
-                break;
-            }
-        }
-    }
-
     pending.append(cmd);
 
     if (pending.count() == 1) {
@@ -1748,12 +1739,6 @@ int QFtp::connectToHost(const QString &host, quint16 port)
     cmds << QString::number((uint)port);
     int id = d->addCommand(new QFtpCommand(ConnectToHost, cmds));
     d->pi.transferConnectionExtended = true;
-    
-    if (!d->pi.dtp.isTextCodecInstalled()) {
-        // request server features available (we expect UTF8 to be included according to RFC-2640)
-        d->rawInnerCommand(QLatin1String("FEAT"));
-    }
-    
     return id;
 }
 
@@ -2202,6 +2187,11 @@ void QFtp::abort()
         return;
     }
 
+    abortImpl();
+}
+
+void QFtp::abortImpl()
+{
     clearPendingCommands();
     d->pi.abort();
 }
@@ -2257,7 +2247,7 @@ void QFtp::reset()
 */
 int QFtp::currentId() const
 {
-    if (d->pending.isEmpty() || d->pending.first()->id == -1)
+    if (d->pending.isEmpty())
         return 0;
     return d->pending.first()->id;
 }
@@ -2270,7 +2260,7 @@ int QFtp::currentId() const
 */
 QFtp::Command QFtp::currentCommand() const
 {
-    if (d->pending.isEmpty() || d->pending.first()->id == -1)
+    if (d->pending.isEmpty())
         return None;
     return d->pending.first()->command;
 }
@@ -2306,12 +2296,7 @@ QIODevice* QFtp::currentDevice() const
 */
 bool QFtp::hasPendingCommands() const
 {
-    int non_inner_cmds = 0;
-    foreach (QFtpCommand *c, d->pending) {
-        if (c->id > 0)
-            ++non_inner_cmds;
-    }
-    return non_inner_cmds > 1;
+    return d->pending.count() > 1;
 }
 
 /*!
@@ -2323,17 +2308,9 @@ bool QFtp::hasPendingCommands() const
 */
 void QFtp::clearPendingCommands()
 {
-    if (d->pending.isEmpty())
-        return;
-        
     // delete all entries except the first one and inner requests
-    QList<QFtpCommand *>::iterator i = d->pending.end();
-    while (--i != d->pending.begin()) {
-        if ((*i)->id > 0)
-            i = d->pending.erase(i);
-        else
-            (*i)->emitDone = false;
-    }
+    while (d->pending.count() > 1)
+      delete d->pending.takeLast();
 }
 
 /*!
@@ -2389,8 +2366,7 @@ void QFtpPrivate::_q_startNextCommand()
 
     if (q->bytesAvailable())
         q->readAll(); // clear the data
-    if (c->id != -1)
-        emit q->commandStarted(c->id);
+    emit q->commandStarted(c->id);
 
     // Proxy support, replace the Login argument in place, then fall
     // through.
@@ -2501,11 +2477,6 @@ void QFtpPrivate::_q_piError(int errorCode, const QString &text)
     }
 
     QFtpCommand *c = pending.first();
-    
-    if (c->id == -1) {
-        innerCommandFinished(c, false);
-        return;
-    }
 
     // non-fatal errors
     if (c->command == QFtp::Get && pi.currentCommand().startsWith(QLatin1String("SIZE "))) {
@@ -2573,8 +2544,6 @@ void QFtpPrivate::_q_piError(int errorCode, const QString &text)
         emit q->done(true);
     else
         _q_startNextCommand();
-        
-    emit q->done(true);
 }
 
 /*! \internal
@@ -2593,7 +2562,7 @@ void QFtpPrivate::_q_piConnectState(int connectState)
 */
 void QFtpPrivate::_q_piFtpReply(int code, const QString &text)
 {
-    if (q_func()->currentCommand() == QFtp::RawCommand && !pending.isEmpty() && pending.first()->id != -1) {
+    if (q_func()->currentCommand() == QFtp::RawCommand && !pending.isEmpty()) {
         pi.rawCommand = true;
         emit q_func()->rawCommandReply(code, text);
     }
@@ -2604,8 +2573,9 @@ void QFtpPrivate::_q_piFtpReply(int code, const QString &text)
 */
 QFtp::~QFtp()
 {
-    abort();
     if (!d->pending.isEmpty())
+        abortImpl();
+    if (d->state != Connected && d->state != LoggedIn)
         close();
 }
 
