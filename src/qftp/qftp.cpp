@@ -167,6 +167,7 @@ class QFtpPI : public QObject
 
 public:
     QFtpPI(QObject *parent = 0);
+    ~QFtpPI();
 
     void connectToHost(const QString &host, quint16 port);
 
@@ -864,6 +865,12 @@ QFtpPI::QFtpPI(QObject *parent) :
 
     connect(&dtp, SIGNAL(connectState(int)),
              SLOT(dtpConnectState(int)));
+}
+
+QFtpPI::~QFtpPI()
+{
+    disconnect(&dtp, 0, 0, 0);
+    disconnect(&commandSocket, 0, 0, 0);
 }
 
 void QFtpPI::connectToHost(const QString &host, quint16 port)
@@ -2198,8 +2205,8 @@ void QFtp::abortImpl()
 
 void QFtp::reset()
 {
-    d->pi.disconnect(this);
-    d->pi.dtp.disconnect(this);
+    disconnect(&d->pi);
+    disconnect(&d->pi.dtp);
 
     QScopedPointer<QFtpPrivate> old;
     old.reset(d.take());
@@ -2573,9 +2580,11 @@ void QFtpPrivate::_q_piFtpReply(int code, const QString &text)
 */
 QFtp::~QFtp()
 {
+    disconnect(&d->pi);
+    disconnect(&d->pi.dtp);
     if (!d->pending.isEmpty())
         abortImpl();
-    if (d->state != Connected && d->state != LoggedIn)
+    if (d->state == Connected || d->state == LoggedIn)
         close();
 }
 
