@@ -1077,17 +1077,17 @@ bool QFtpPI::processReply()
 
         if (!dtp.isTextCodecInstalled())
             dtp.installTextCodec(QTextCodec::codecForName("ISO-8859-1"));
-        if (!pendingCommands.isEmpty() && pendingCommands[0].trimmed() == QLatin1String("OPTS UTF-8 ON"))
+        if (!pendingCommands.isEmpty() && pendingCommands[0].trimmed() == QLatin1String("OPTS UTF8 ON"))
             pendingCommands.pop_front();
     }
-    
-    if (currentCmd.startsWith(QLatin1String("OPTS UTF-8 ON")) && !dtp.isTextCodecInstalled()) {
-        if (replyCodeInt == 211)
+
+    if (currentCmd.startsWith(QLatin1String("OPTS UTF8 ON")) && !dtp.isTextCodecInstalled()) {
+        if (replyCodeInt == 211 || replyCodeInt == 200 || replyCodeInt == 202)
             dtp.installTextCodec(QTextCodec::codecForName("UTF-8"));
         else
             dtp.installTextCodec(QTextCodec::codecForName("ISO-8859-1"));
     }
-    
+
     switch (abortState) {
         case AbortStarted:
             abortState = WaitForAbortToFinish;
@@ -2071,7 +2071,11 @@ int QFtp::rename(const QString &oldname, const QString &newname)
 }
 
 /*!
-    Checks if server supports UTF8, and requests it if needed.
+    Sends non-standard "OPTS UTF-8 ON" command and sets a UTF-8 codec
+    for filenames regardless of the answer received. It is hard to 
+    check reliably whether an FTP server supports UTF-8. According to 
+    RFC 2640, they SHALL use it by default. FileZilla and vsftpd do,
+    as well as some other popular servers.
 
     The function does not block and returns immediately. The command
     is scheduled, and its execution is performed asynchronously. The
@@ -2087,8 +2091,7 @@ int QFtp::rename(const QString &oldname, const QString &newname)
 int QFtp::setUTF8()
 {
     QStringList cmds;
-    cmds << QLatin1String("FEAT") + QLatin1String("\r\n");
-    cmds << QLatin1String("OPTS UTF-8 ON") + QLatin1String("\r\n");
+    cmds << QLatin1String("OPTS UTF8 ON") + QLatin1String("\r\n");
     return d->addCommand(new QFtpCommand(SetUTF8, cmds));
 }
 

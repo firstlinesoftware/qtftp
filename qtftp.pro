@@ -3,6 +3,9 @@ TEMPLATE = subdirs
 module_qtftp_src.subdir = src
 module_qtftp_src.target = sub-src
 
+unix {
+SUBDIRS += module_qtftp_src
+} else {
 module_qtftp_examples.subdir = examples
 module_qtftp_examples.target = sub-examples
 module_qtftp_examples.depends = module_qtftp_src
@@ -19,4 +22,5 @@ module_qtftp_tests.CONFIG = no_default_install
 SUBDIRS += module_qtftp_src \
            module_qtftp_examples \
            module_qtftp_tests \
+}
 
