@@ -70,19 +70,19 @@ public:
              const QDateTime &lastRead, bool isDir, bool isFile, bool isSymLink,
              bool isWritable, bool isReadable, bool isExecutable);
     QUrlInfo &operator=(const QUrlInfo &ui);
-    virtual ~QUrlInfo();
+    ~QUrlInfo();
 
-    virtual void setName(const QString &name);
-    virtual void setDir(bool b);
-    virtual void setFile(bool b);
-    virtual void setSymLink(bool b);
-    virtual void setOwner(const QString &s);
-    virtual void setGroup(const QString &s);
-    virtual void setSize(qint64 size);
-    virtual void setWritable(bool b);
-    virtual void setReadable(bool b);
-    virtual void setPermissions(int p);
-    virtual void setLastModified(const QDateTime &dt);
+    void setName(const QString &name);
+    void setDir(bool b);
+    void setFile(bool b);
+    void setSymLink(bool b);
+    void setOwner(const QString &s);
+    void setGroup(const QString &s);
+    void setSize(qint64 size);
+    void setWritable(bool b);
+    void setReadable(bool b);
+    void setPermissions(int p);
+    void setLastModified(const QDateTime &dt);
     void setLastRead(const QDateTime &dt);
 
     bool isValid() const;

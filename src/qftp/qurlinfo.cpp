@@ -47,6 +47,58 @@
 
 QT_BEGIN_NAMESPACE
 
+inline QString __qDirFromWinSeparators(const QString &path)
+{
+    static QChar win_separator = QChar::fromLatin1('\\');
+    static QChar unix_separator = QChar::fromLatin1('/');
+    
+    int i = path.indexOf(win_separator);
+    if (i != -1) 
+    {
+        QString n(path);
+
+        QChar * const data = n.data();
+        data[i++] = unix_separator;
+
+        for (; i < n.length(); ++i) 
+        {
+            if (data[i] == win_separator)
+                data[i] = unix_separator;
+        }
+
+        return n;
+    }
+    return path;
+}
+
+inline int __qFileSystemEntryFindLastSeparator(const QString &path)
+{
+    static QChar unix_separator = QChar::fromLatin1('/');
+
+    for (int i = path.size() - 1; i >= 0; --i) 
+    {
+        if (path[i].unicode() == unix_separator)
+            return i;
+    }
+    
+    return -1;
+}
+
+
+inline QString __qFileSystemEntryFileName(const QString &_path)
+{
+    QString path = __qDirFromWinSeparators(_path);
+    int lastSeparator = __qFileSystemEntryFindLastSeparator(path);
+
+    if (lastSeparator < 0)
+        return path;
+        
+    if (lastSeparator == (path.length() - 1))
+        return __qFileSystemEntryFileName(path.left(path.length() - 1));
+
+    return path.mid(lastSeparator + 1);
+}
+
 class QUrlInfoPrivate
 {
 public:
@@ -196,7 +248,7 @@ QUrlInfo::QUrlInfo(const QUrl &url, int permissions, const QString &owner,
                     bool isWritable, bool isReadable, bool isExecutable)
 {
     d = new QUrlInfoPrivate;
-    d->name = QFileInfo(url.path()).fileName();
+    d->name = __qFileSystemEntryFileName(url.path());
     d->permissions = permissions;
     d->owner = owner;
     d->group = group;

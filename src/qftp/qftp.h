@@ -71,7 +71,8 @@ public:
         UnknownError,
         HostNotFound,
         ConnectionRefused,
-        NotConnected
+        NotConnected,
+        NoSuchFile
     };
     enum Command {
         None,
@@ -88,7 +89,8 @@ public:
         Mkdir,
         Rmdir,
         Rename,
-        RawCommand
+        RawCommand,
+        SetUTF8
     };
     enum TransferMode {
         Active,
@@ -113,6 +115,7 @@ public:
     int mkdir(const QString &dir);
     int rmdir(const QString &dir);
     int rename(const QString &oldname, const QString &newname);
+    int setUTF8();
 
     int rawCommand(const QString &command);
 
@@ -133,6 +136,7 @@ public:
 
 public Q_SLOTS:
     void abort();
+    void reset();
 
 Q_SIGNALS:
     void stateChanged(int);
@@ -145,6 +149,9 @@ Q_SIGNALS:
     void commandFinished(int, bool);
     void done(bool);
 
+private:
+    void abortImpl();
+    
 private:
     Q_DISABLE_COPY(QFtp)
     QScopedPointer<QFtpPrivate> d;
